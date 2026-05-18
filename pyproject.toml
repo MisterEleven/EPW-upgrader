@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "epwupgrader"
+version = "0.1.0"
+description = "Morph EnergyPlus EPW weather files to future climate conditions using CMIP6 SSP scenarios"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+    { name = "epwupgrader Contributors", email = "license@epwupgrader.io" },
+]
+keywords = ["energyplus", "epw", "climate", "morphing", "building-simulation", "CMIP6", "SSP"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pandas>=1.5",
+    "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "flake8>=6.0",
+    "black>=23.0",
+]
+full = [
+    "ladybug-core>=1.45",
+    "xarray>=2023.1",
+    "netCDF4>=1.6",
+]
+
+[project.scripts]
+epwupgrader = "epwupgrader.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourorg/epwupgrader"
+Documentation = "https://github.com/yourorg/epwupgrader/blob/main/docs/"
+Repository = "https://github.com/yourorg/epwupgrader"
+"Bug Tracker" = "https://github.com/yourorg/epwupgrader/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["epwupgrader*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+exclude = [".git", "__pycache__", "build", "dist", "*.egg-info"]
