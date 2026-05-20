@@ -10,7 +10,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 authors = [
-    { name = "epwupgrader Contributors", email = "license@epwupgrader.io" },
+    { name = "Timo Feddern", email = "license@feddern.dev" },
 ]
 keywords = ["energyplus", "epw", "climate", "morphing", "building-simulation", "CMIP6", "SSP"]
 classifiers = [
@@ -45,10 +45,10 @@ full = [
 epwupgrader = "epwupgrader.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourorg/epwupgrader"
-Documentation = "https://github.com/yourorg/epwupgrader/blob/main/docs/"
-Repository = "https://github.com/yourorg/epwupgrader"
-"Bug Tracker" = "https://github.com/yourorg/epwupgrader/issues"
+Homepage = "https://github.com/MisterEleven/EPW-upgrader"
+Documentation = "https://github.com/MisterEleven/EPW-upgrader/blob/main/docs/"
+Repository = "https://github.com/MisterEleven/EPW-upgrader"
+"Bug Tracker" = "https://github.com/MisterEleven/EPW-upgrader/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

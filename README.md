@@ -4,7 +4,7 @@
 
 [![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-brightgreen.svg)](https://www.python.org/downloads/)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/epwupgrader/epwupgrader/actions)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/MisterEleven/EPW-upgrader/actions)
 
 ---
 
@@ -64,7 +64,7 @@ emissions), with time-sliced projections from 2020 to 2100. The tool is usable b
 ### Standard install (editable)
 
 ```bash
-git clone https://github.com/epwupgrader/epwupgrader.git
+git clone https://github.com/MisterEleven/EPW-upgrader.git
 cd epwupgrader
 pip install -e .
 ```
@@ -332,7 +332,7 @@ See [docs/contributing.md](docs/contributing.md) for the full guide, including:
 - A **commercial license** is required for any for-profit use (e.g. fee-based consultancy,
   SaaS products, or inclusion in commercial software).
 
-For commercial licensing enquiries contact: **license@epwupgrader.io**
+For commercial licensing enquiries contact: **license@feddern.dev**
 
 See [LICENSE](LICENSE) for the full licence text.
 

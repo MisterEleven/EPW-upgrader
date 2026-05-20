@@ -1,17 +1,17 @@
 Business Source License 1.1
 
-Licensor:             epwupgrader Contributors
+Licensor:             Timo Feddern
 Licensed Work:        epwupgrader
                       The Licensed Work is (c) 2025 epwupgrader Contributors
 Additional Use Grant: You may make production use of the Licensed Work for
                       private, personal, academic, or non-commercial purposes
                       without restriction.
-Change Date:          2029-07-11
+Change Date:          2026-05-20
 Change License:       Apache License, Version 2.0
 
 For commercial use (any use in a for-profit context, including internal
 business tooling, client work, or SaaS offerings), a commercial license is
-required. Contact: license@epwupgrader.io
+required. Contact: license@feddern.dev
 
 ---
 
@@ -89,7 +89,7 @@ recipients of the licensed work to be provided by Licensor:
 COMMERCIAL LICENSING
 
 To obtain a commercial license for use of epwupgrader in a for-profit context,
-please contact: license@epwupgrader.io
+please contact: license@feddern.dev
 
 Commercial use includes but is not limited to:
   - Use within a company or organisation for internal business purposes
