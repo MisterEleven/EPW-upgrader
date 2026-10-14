@@ -4,7 +4,6 @@ Tests for epwupgrader.anomalies
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from epwupgrader.anomalies import (
     check_physical_bounds,
@@ -74,8 +73,7 @@ class TestFlagAnomalies:
     def test_default_columns_uses_all_numeric(self):
         df = _make_df()
         result = flag_anomalies(df)
-        for col in ["dry_bulb_temperature", "relative_humidity",
-                    "wind_speed", "wind_direction"]:
+        for col in ["dry_bulb_temperature", "relative_humidity", "wind_speed", "wind_direction"]:
             assert f"{col}_anomaly" in result.columns
 
     def test_multiple_columns(self):
@@ -101,18 +99,22 @@ class TestFlagAnomalies:
 
 class TestCheckPhysicalBounds:
     def test_in_bounds_gives_no_flags(self):
-        df = pd.DataFrame({
-            "dry_bulb_temperature": [20.0, 15.0, 10.0],
-            "relative_humidity": [60.0, 70.0, 50.0],
-        })
+        df = pd.DataFrame(
+            {
+                "dry_bulb_temperature": [20.0, 15.0, 10.0],
+                "relative_humidity": [60.0, 70.0, 50.0],
+            }
+        )
         result = check_physical_bounds(df)
         assert result["dry_bulb_temperature_out_of_bounds"].sum() == 0
         assert result["relative_humidity_out_of_bounds"].sum() == 0
 
     def test_out_of_bounds_flagged(self):
-        df = pd.DataFrame({
-            "dry_bulb_temperature": [100.0, -100.0, 20.0],
-        })
+        df = pd.DataFrame(
+            {
+                "dry_bulb_temperature": [100.0, -100.0, 20.0],
+            }
+        )
         result = check_physical_bounds(df)
         assert result["dry_bulb_temperature_out_of_bounds"].sum() == 2
 
@@ -150,8 +152,11 @@ class TestDetectWindAnomalies:
     def test_all_flag_dtypes_are_bool(self):
         df = _make_df()
         result = detect_wind_anomalies(df)
-        for col in ["wind_speed_unphysical", "wind_direction_out_of_range",
-                    "wind_calm_direction_inconsistency"]:
+        for col in [
+            "wind_speed_unphysical",
+            "wind_direction_out_of_range",
+            "wind_calm_direction_inconsistency",
+        ]:
             assert result[col].dtype == bool
 
     def test_negative_wind_speed_flagged(self):
@@ -176,10 +181,12 @@ class TestDetectWindAnomalies:
         assert bool(result.loc[1, "wind_direction_out_of_range"]) is True
 
     def test_calm_with_nonzero_direction_flagged(self):
-        df = pd.DataFrame({
-            "wind_speed": [0.0, 0.3, 0.1],
-            "wind_direction": [90.0, 180.0, 0.0],
-        })
+        df = pd.DataFrame(
+            {
+                "wind_speed": [0.0, 0.3, 0.1],
+                "wind_direction": [90.0, 180.0, 0.0],
+            }
+        )
         result = detect_wind_anomalies(df, calm_threshold=0.5)
         assert bool(result.loc[0, "wind_calm_direction_inconsistency"]) is True
         assert bool(result.loc[1, "wind_calm_direction_inconsistency"]) is True

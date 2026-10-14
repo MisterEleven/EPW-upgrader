@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import os
 import textwrap
 from pathlib import Path
 from typing import Generator
@@ -13,10 +11,10 @@ import pytest
 
 from epwupgrader.parser import NUM_HEADER_LINES
 
-
 # ---------------------------------------------------------------------------
 # Helper – build one EPW data row (35 fields, matching EPW_COLUMNS order)
 # ---------------------------------------------------------------------------
+
 
 def _make_epw_data_row(
     year: int = 2000,
@@ -57,7 +55,11 @@ def _make_epw_data_row(
 ) -> list:
     """Return a list of 35 values matching the EPW_COLUMNS order."""
     return [
-        year, month, day, hour, minute,
+        year,
+        month,
+        day,
+        hour,
+        minute,
         data_flags,
         dry_bulb_temperature,
         dew_point_temperature,
@@ -111,6 +113,7 @@ _FAKE_HEADER = textwrap.dedent("""\
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def sample_epw_file(tmp_path: Path) -> Generator[Path, None, None]:
     """Write a minimal but valid EPW file (8 header + 24 data rows) to a temp dir."""
@@ -131,6 +134,32 @@ def sample_epw_file(tmp_path: Path) -> Generator[Path, None, None]:
 
 
 @pytest.fixture()
+def full_year_epw_file(tmp_path: Path) -> Path:
+    """Write an 8760-row EPW with a TMYx-style Period of Record comment."""
+    epw_path = tmp_path / "year.epw"
+    header = _FAKE_HEADER.replace(
+        "COMMENTS 1,Test EPW file", 'COMMENTS 1,"ERA5 - Period of Record=2011-2025"'
+    )
+    days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    with epw_path.open("w", encoding="utf-8") as fh:
+        fh.write(header)
+        for month, ndays in enumerate(days, 1):
+            for day in range(1, ndays + 1):
+                for hour in range(1, 25):
+                    row = _make_epw_data_row(
+                        month=month,
+                        day=day,
+                        hour=hour,
+                        dry_bulb_temperature=round(5 + month + hour * 0.3, 1),
+                        dew_point_temperature=2.3,
+                        global_horizontal_radiation=300 if 8 <= hour <= 16 else 0,
+                        aerosol_optical_depth=0.085,
+                    )
+                    fh.write(",".join(str(v) for v in row) + "\n")
+    return epw_path
+
+
+@pytest.fixture()
 def small_epw_df() -> pd.DataFrame:
     """Return a small in-memory EPW DataFrame (48 rows, 2 months x 24 hours).
 
@@ -146,16 +175,20 @@ def small_epw_df() -> pd.DataFrame:
                 dew_point_temperature=10.0 + hour * 0.2,
                 relative_humidity=60.0,
                 global_horizontal_radiation=max(0.0, 500.0 * (hour - 6) / 6)
-                if 6 <= hour <= 18 else 0.0,
+                if 6 <= hour <= 18
+                else 0.0,
                 direct_normal_radiation=max(0.0, 400.0 * (hour - 6) / 6)
-                if 6 <= hour <= 18 else 0.0,
+                if 6 <= hour <= 18
+                else 0.0,
                 diffuse_horizontal_radiation=max(0.0, 100.0 * (hour - 6) / 6)
-                if 6 <= hour <= 18 else 0.0,
+                if 6 <= hour <= 18
+                else 0.0,
                 wind_speed=3.0 + hour * 0.1,
             )
             rows.append(row)
 
     from epwupgrader.parser import EPW_COLUMNS
+
     df = pd.DataFrame(rows, columns=EPW_COLUMNS)
 
     numeric_cols = [c for c in EPW_COLUMNS if c != "data_flags"]

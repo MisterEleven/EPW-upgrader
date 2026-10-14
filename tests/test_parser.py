@@ -1,165 +1,95 @@
-"""
-Tests for epwupgrader.parser
-============================
-Tests the public API:
-    parse_epw(path) -> (df, metadata, header_lines)
-    EPW_COLUMNS      list[str]  (35 field names)
-    EPW_HEADER_ROWS  int        (8)
-"""
+"""Tests for epwupgrader.parser."""
 
 import pandas as pd
 import pytest
 
-from epwupgrader.parser import EPW_COLUMNS, EPW_HEADER_ROWS, parse_epw
+from epwupgrader.parser import (
+    EPW_COLUMNS,
+    NUM_HEADER_LINES,
+    detect_baseline_year,
+    parse_epw,
+    parse_epw_meta,
+)
 
 
-class TestEPWColumns:
-    def test_is_list(self):
-        assert isinstance(EPW_COLUMNS, list)
-
-    def test_length(self):
-        assert len(EPW_COLUMNS) == 35
-
-    def test_first_field_is_year(self):
-        assert EPW_COLUMNS[0] == "year"
-
-    def test_month_field_present(self):
-        assert "month" in EPW_COLUMNS
-
-    def test_dry_bulb_temperature_present(self):
-        assert "dry_bulb_temperature" in EPW_COLUMNS
-
-    def test_dew_point_temperature_present(self):
-        assert "dew_point_temperature" in EPW_COLUMNS
-
-    def test_relative_humidity_present(self):
-        assert "relative_humidity" in EPW_COLUMNS
-
-    def test_radiation_fields_present(self):
-        assert "global_horiz_radiation" in EPW_COLUMNS
-        assert "direct_normal_radiation" in EPW_COLUMNS
-        assert "diffuse_horiz_radiation" in EPW_COLUMNS
-
-    def test_wind_speed_present(self):
-        assert "wind_speed" in EPW_COLUMNS
-
-    def test_no_duplicates(self):
-        assert len(EPW_COLUMNS) == len(set(EPW_COLUMNS))
+def test_columns():
+    assert len(EPW_COLUMNS) == 35
+    assert len(set(EPW_COLUMNS)) == 35
+    assert EPW_COLUMNS[0] == "year"
 
 
-class TestEPWHeaderRows:
-    def test_value_is_eight(self):
-        assert EPW_HEADER_ROWS == 8
-
-    def test_is_int(self):
-        assert isinstance(EPW_HEADER_ROWS, int)
-
-
-class TestParseEPWReturnShape:
-    def test_returns_three_tuple(self, sample_epw_file):
-        result = parse_epw(sample_epw_file)
-        assert isinstance(result, tuple) and len(result) == 3
-
-    def test_first_element_is_dataframe(self, sample_epw_file):
-        df, _meta, _hdr = parse_epw(sample_epw_file)
-        assert isinstance(df, pd.DataFrame)
-
-    def test_second_element_is_dict(self, sample_epw_file):
-        _df, meta, _hdr = parse_epw(sample_epw_file)
-        assert isinstance(meta, dict)
-
-    def test_third_element_is_list(self, sample_epw_file):
-        _df, _meta, hdr = parse_epw(sample_epw_file)
-        assert isinstance(hdr, list)
+def test_parse_shape(sample_epw_file):
+    header, df = parse_epw(sample_epw_file)
+    assert len(header) == NUM_HEADER_LINES
+    assert header[0].startswith("LOCATION")
+    assert len(df) == 24
+    assert list(df.columns) == EPW_COLUMNS
 
 
-class TestParseEPWDataFrame:
-    def test_row_count_is_8760(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert len(df) == 8760
-
-    def test_all_epw_columns_present(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        for col in EPW_COLUMNS:
-            assert col in df.columns, f"Missing column: {col}"
-
-    def test_month_values_in_range(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert df["month"].between(1, 12).all()
-
-    def test_all_12_months_present(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert set(df["month"].unique()) == set(range(1, 13))
-
-    def test_dry_bulb_is_numeric(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert pd.api.types.is_numeric_dtype(df["dry_bulb_temperature"])
-
-    def test_relative_humidity_in_physical_range(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert (df["relative_humidity"] >= 0).all()
-        assert (df["relative_humidity"] <= 100).all()
-
-    def test_wind_speed_non_negative(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert (df["wind_speed"] >= 0).all()
-
-    def test_solar_radiation_non_negative(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert (df["global_horiz_radiation"] >= 0).all()
-        assert (df["direct_normal_radiation"] >= 0).all()
-        assert (df["diffuse_horiz_radiation"] >= 0).all()
-
-    def test_first_row_month_is_1(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert df["month"].iloc[0] == 1
-
-    def test_last_row_month_is_12(self, sample_epw_file):
-        df, _, _ = parse_epw(sample_epw_file)
-        assert df["month"].iloc[-1] == 12
+def test_parse_types(sample_epw_file):
+    _, df = parse_epw(str(sample_epw_file))
+    assert pd.api.types.is_numeric_dtype(df["dry_bulb_temperature"])
+    assert df["data_flags"].iloc[0] == "?9?9?9?9?9"
+    assert df["present_weather_codes"].iloc[0] == "999999999"
 
 
-class TestParseEPWMeta:
-    def test_metadata_has_city(self, sample_epw_file):
-        _, meta, _ = parse_epw(sample_epw_file)
-        assert "city" in meta
-
-    def test_metadata_has_latitude(self, sample_epw_file):
-        _, meta, _ = parse_epw(sample_epw_file)
-        assert "latitude" in meta
-
-    def test_metadata_has_longitude(self, sample_epw_file):
-        _, meta, _ = parse_epw(sample_epw_file)
-        assert "longitude" in meta
-
-    def test_metadata_latitude_value(self, sample_epw_file):
-        _, meta, _ = parse_epw(sample_epw_file)
-        assert meta["latitude"] == pytest.approx(51.5, abs=0.1)
-
-    def test_metadata_city_value(self, sample_epw_file):
-        _, meta, _ = parse_epw(sample_epw_file)
-        assert meta["city"] == "TestCity"
+def test_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        parse_epw(tmp_path / "nope.epw")
 
 
-class TestParseEPWHeaderLines:
-    def test_header_lines_count(self, sample_epw_file):
-        _, _, hdr = parse_epw(sample_epw_file)
-        assert len(hdr) == EPW_HEADER_ROWS
-
-    def test_first_header_starts_with_location(self, sample_epw_file):
-        _, _, hdr = parse_epw(sample_epw_file)
-        assert hdr[0].startswith("LOCATION")
-
-    def test_header_lines_are_strings(self, sample_epw_file):
-        _, _, hdr = parse_epw(sample_epw_file)
-        assert all(isinstance(line, str) for line in hdr)
+def test_header_only(tmp_path):
+    p = tmp_path / "h.epw"
+    p.write_text("LOCATION,x\n" * NUM_HEADER_LINES)
+    with pytest.raises(ValueError, match="No data rows"):
+        parse_epw(p)
 
 
-class TestParseEPWErrors:
-    def test_file_not_found_raises(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            parse_epw(tmp_path / "nonexistent.epw")
+def test_not_epw(tmp_path):
+    p = tmp_path / "x.epw"
+    p.write_text("foo\n" * 20)
+    with pytest.raises(ValueError, match="LOCATION"):
+        parse_epw(p)
 
-    def test_accepts_string_path(self, sample_epw_file):
-        df, _, _ = parse_epw(str(sample_epw_file))
-        assert len(df) == 8760
+
+def test_short_row(sample_epw_file):
+    with sample_epw_file.open("a") as fh:
+        fh.write("2000,1,2,1,0\n")
+    with pytest.raises(ValueError, match="expected 35 fields"):
+        parse_epw(sample_epw_file)
+
+
+def test_latin1(sample_epw_file):
+    raw = sample_epw_file.read_bytes().replace(b"TestCity", "Zürich".encode("latin-1"))
+    sample_epw_file.write_bytes(raw)
+    header, _ = parse_epw(sample_epw_file)
+    assert "Zürich" in header[0]
+
+
+def test_bad_month(sample_epw_file):
+    lines = sample_epw_file.read_text().splitlines()
+    lines[NUM_HEADER_LINES] = lines[NUM_HEADER_LINES].replace("2000,1,", "2000,13,", 1)
+    sample_epw_file.write_text("\n".join(lines) + "\n")
+    with pytest.raises(ValueError, match="month"):
+        parse_epw(sample_epw_file)
+
+
+def test_meta(sample_epw_file):
+    meta = parse_epw_meta(sample_epw_file)
+    assert meta["city"] == "TestCity"
+    assert float(meta["latitude"]) == pytest.approx(51.5)
+
+
+def test_baseline_from_period_of_record():
+    header = ['COMMENTS 1,"NCEI ISD/ERA5 - Period of Record=2011-2025; Jan=2024"']
+    assert detect_baseline_year(header) == 2018
+
+
+def test_baseline_from_data_years():
+    df = pd.DataFrame({"year": [1990, 1995, 2000]})
+    assert detect_baseline_year(["COMMENTS 1,none"], df) == 1995
+
+
+def test_baseline_undetectable():
+    with pytest.raises(ValueError):
+        detect_baseline_year(["COMMENTS 1,none"])

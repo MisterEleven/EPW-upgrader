@@ -15,6 +15,7 @@ from epwupgrader.psychrometrics import (
     rh_from_dew_point,
     rh_from_vapour_pressures,
     saturation_vapour_pressure,
+    scale_rh_for_temp_shift,
     vapour_pressure_from_dew_point,
     vapour_pressure_from_rh,
     wet_bulb_temperature,
@@ -238,3 +239,19 @@ class TestRecalculateDewPointAfterTempShift:
         new_t = np.array([20.0])
         result = recalculate_dew_point_after_temp_shift(odp, new_t)
         assert isinstance(result, np.ndarray)
+
+
+class TestScaleRhForTempShift:
+    def test_warming_lowers_rh(self):
+        rh = scale_rh_for_temp_shift(np.array([80.0]), np.array([20.0]), np.array([22.0]))
+        assert rh[0] < 80.0
+
+    def test_matches_dew_point_method_when_consistent(self):
+        rh0 = 100.0 * saturation_vapour_pressure(12.0) / saturation_vapour_pressure(20.0)
+        new = scale_rh_for_temp_shift(np.array([rh0]), np.array([20.0]), np.array([23.0]))
+        expected = recalculate_rh_after_temp_shift(np.array([12.0]), np.array([23.0]))
+        assert new[0] == pytest.approx(expected[0], rel=1e-9)
+
+    def test_clipped_to_100(self):
+        rh = scale_rh_for_temp_shift(np.array([99.0]), np.array([20.0]), np.array([10.0]))
+        assert rh[0] == 100.0
