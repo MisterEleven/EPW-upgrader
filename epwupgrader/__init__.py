@@ -1,31 +1,43 @@
-"""
-epwupgrader - Morph EnergyPlus EPW weather files to future climate conditions.
-"""
-from epwupgrader.parser import parse_epw
-from epwupgrader.morphing import (
-    morph_temperature,
-    morph_radiation,
-    morph_wind_speed,
-    apply_all_morphing,
-)
-from epwupgrader.psychrometrics import (
-    saturation_vapour_pressure,
-    recalculate_rh_after_temp_shift,
-    recalculate_dew_point_after_temp_shift,
-)
-from epwupgrader.anomalies import get_monthly_anomalies
-from epwupgrader.writer import write_epw
+"""Morph EnergyPlus EPW weather files to future climates."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+
+from epwupgrader.morphing import (  # noqa: E402
+    apply_all_morphing,
+    morph_radiation,
+    morph_temperature,
+    morph_wind_speed,
+)
+from epwupgrader.parser import detect_baseline_year, parse_epw, parse_epw_meta  # noqa: E402
+from epwupgrader.psychrometrics import (  # noqa: E402
+    recalculate_dew_point_after_temp_shift,
+    recalculate_rh_after_temp_shift,
+    saturation_vapour_pressure,
+    scale_rh_for_temp_shift,
+)
+from epwupgrader.scenarios import (  # noqa: E402
+    get_monthly_anomalies,
+    load_anomalies_csv,
+    to_coefficients,
+)
+from epwupgrader.writer import annotate_header, write_epw  # noqa: E402
+
 __all__ = [
-    "parse_epw",
-    "morph_temperature",
-    "morph_radiation",
-    "morph_wind_speed",
+    "__version__",
+    "annotate_header",
     "apply_all_morphing",
-    "saturation_vapour_pressure",
-    "recalculate_rh_after_temp_shift",
-    "recalculate_dew_point_after_temp_shift",
+    "detect_baseline_year",
     "get_monthly_anomalies",
+    "load_anomalies_csv",
+    "morph_radiation",
+    "morph_temperature",
+    "morph_wind_speed",
+    "parse_epw",
+    "parse_epw_meta",
+    "recalculate_dew_point_after_temp_shift",
+    "recalculate_rh_after_temp_shift",
+    "saturation_vapour_pressure",
+    "scale_rh_for_temp_shift",
+    "to_coefficients",
     "write_epw",
 ]
