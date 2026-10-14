@@ -1,7 +1,0 @@
-pandas==2.2.2
-numpy==1.26.4
-ladybug-core==1.43.2
-pyepw==0.1.5
-xarray==2024.3.0
-netCDF4==1.7.1
-click==8.1.7

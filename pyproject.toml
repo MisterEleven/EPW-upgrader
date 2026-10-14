@@ -1,64 +1,55 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "epwupgrader"
-version = "0.1.0"
-description = "Morph EnergyPlus EPW weather files to future climate conditions using CMIP6 SSP scenarios"
+dynamic = ["version"]
+description = "Morph EnergyPlus EPW weather files to future climates (Belcher 2005)"
 readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.9"
-authors = [
-    { name = "Timo Feddern", email = "license@feddern.dev" },
-]
+license = "BUSL-1.1"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Timo Feddern", email = "license@feddern.dev" }]
 keywords = ["energyplus", "epw", "climate", "morphing", "building-simulation", "CMIP6", "SSP"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
-dependencies = [
-    "pandas>=1.5",
-    "numpy>=1.23",
-]
+dependencies = ["click>=8.0", "numpy>=1.23", "pandas>=1.5"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "flake8>=6.0",
-    "black>=23.0",
-]
-full = [
-    "ladybug-core>=1.45",
-    "xarray>=2023.1",
-    "netCDF4>=1.6",
-]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.6", "pre-commit>=3.0", "build"]
 
 [project.scripts]
 epwupgrader = "epwupgrader.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/MisterEleven/EPW-upgrader"
-Documentation = "https://github.com/MisterEleven/EPW-upgrader/blob/main/docs/"
 Repository = "https://github.com/MisterEleven/EPW-upgrader"
-"Bug Tracker" = "https://github.com/MisterEleven/EPW-upgrader/issues"
+Issues = "https://github.com/MisterEleven/EPW-upgrader/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "epwupgrader.__version__" }
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["epwupgrader*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "--tb=short"
 
-[tool.flake8]
-max-line-length = 100
-extend-ignore = ["E203", "W503"]
-exclude = [".git", "__pycache__", "build", "dist", "*.egg-info"]
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["UP006", "UP007", "UP035", "UP045"]
