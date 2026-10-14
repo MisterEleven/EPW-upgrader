@@ -1,11 +1,12 @@
-"""EPW file parser and writer."""
+"""Read EPW files."""
 
 from __future__ import annotations
 
 import csv
 import logging
+import re
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import pandas as pd
 
@@ -51,71 +52,77 @@ EPW_COLUMNS = [
     "liquid_precipitation_quantity",
 ]
 
+# Kept as text: flags are alphanumeric, weather codes carry leading zeros.
+STRING_COLUMNS = ("data_flags", "present_weather_codes")
+
+_PERIOD_RE = re.compile(r"Period of Record\s*=\s*(\d{4})\s*-\s*(\d{4})")
+
+
+# A full-year hourly EPW is ~1.6 MB; sub-hourly files can be several times larger.
+MAX_FILE_BYTES = 64 * 1024 * 1024
+
+
+RAW_ATTR = "epw_raw_rows"
+
+
+class RawRows(tuple):
+    """Source text of each data row, kept in ``df.attrs`` so unchanged cells are
+    written back verbatim. Immutable, so pandas' attrs deep-copy can share it."""
+
+    def __deepcopy__(self, memo):
+        return self
+
+
+def _read_lines(path: Path) -> list[str]:
+    if path.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError(f"{path} exceeds {MAX_FILE_BYTES // 2**20} MB; not an EPW file?")
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        # Older EPWs often use Latin-1 station names.
+        return path.read_text(encoding="latin-1").splitlines()
+
 
 def parse_epw(path: Union[str, Path]) -> tuple[list[str], pd.DataFrame]:
-    """Parse an EPW weather file into header lines and a data DataFrame.
-
-    Parameters
-    ----------
-    path:
-        Path to the ``.epw`` file.
-
-    Returns
-    -------
-    tuple[list[str], pd.DataFrame]
-        A 2-tuple of (header_lines, data_frame).  ``header_lines`` is a list
-        of the raw header strings (length == NUM_HEADER_LINES).  ``data_frame``
-        has columns defined by :data:`EPW_COLUMNS`.
-    """
+    """Return ``(header_lines, df)`` for an EPW file."""
     path = Path(path)
-    logger.debug("Parsing EPW file: %s", path)
-
-    header_lines: list[str] = []
-    data_rows: list[list[str]] = []
-
-    with path.open(newline="", encoding="utf-8") as fh:
-        for i, line in enumerate(fh):
-            if i < NUM_HEADER_LINES:
-                header_lines.append(line.rstrip("\n"))
-            else:
-                row = next(csv.reader([line]))
-                data_rows.append(row)
-
-    if not data_rows:
+    lines = _read_lines(path)
+    if len(lines) <= NUM_HEADER_LINES:
         raise ValueError(f"No data rows found in EPW file: {path}")
 
-    df = pd.DataFrame(data_rows, columns=EPW_COLUMNS)
+    header_lines = lines[:NUM_HEADER_LINES]
+    if not header_lines[0].startswith("LOCATION"):
+        raise ValueError(f"Not an EPW file (missing LOCATION header): {path}")
 
-    numeric_cols = [c for c in EPW_COLUMNS if c not in ("data_flags",)]
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    rows = []
+    extra_fields = 0
+    for lineno, line in enumerate(lines[NUM_HEADER_LINES:], NUM_HEADER_LINES + 1):
+        if not line.strip():
+            continue
+        row = next(csv.reader([line]))
+        if len(row) < len(EPW_COLUMNS):
+            raise ValueError(f"{path}:{lineno}: expected {len(EPW_COLUMNS)} fields, got {len(row)}")
+        extra_fields += len(row) > len(EPW_COLUMNS)
+        rows.append(tuple(row[: len(EPW_COLUMNS)]))
+    if extra_fields:
+        logger.warning(
+            "%s: dropped fields beyond %d on %d rows", path, len(EPW_COLUMNS), extra_fields
+        )
 
-    logger.debug("Parsed %d data rows from %s", len(df), path)
+    df = pd.DataFrame(rows, columns=EPW_COLUMNS)
+    for col in EPW_COLUMNS:
+        if col not in STRING_COLUMNS:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
+    if not df["month"].between(1, 12).all():
+        raise ValueError(f"{path}: month values must be 1-12")
+    df.attrs[RAW_ATTR] = RawRows(rows)
     return header_lines, df
 
 
 def parse_epw_meta(path: Union[str, Path]) -> dict[str, str]:
-    """Parse the LOCATION header line of an EPW file into a metadata dict.
-
-    Parameters
-    ----------
-    path:
-        Path to the ``.epw`` file.
-
-    Returns
-    -------
-    dict[str, str]
-        Dictionary with keys: ``city``, ``state``, ``country``,
-        ``data_type``, ``wmo_number``, ``latitude``, ``longitude``,
-        ``time_zone``, ``elevation``.
-    """
-    path = Path(path)
-    with path.open(encoding="utf-8") as fh:
-        location_line = fh.readline().rstrip("\n")
-
-    parts = location_line.split(",")
+    """Return the LOCATION header fields as a dict."""
+    location = _read_lines(Path(path))[0]
     keys = [
-        "record_type",
         "city",
         "state",
         "country",
@@ -126,39 +133,20 @@ def parse_epw_meta(path: Union[str, Path]) -> dict[str, str]:
         "time_zone",
         "elevation",
     ]
-    meta: dict[str, str] = {}
-    for key, value in zip(keys, parts):
-        if key == "record_type":
-            continue
-        meta[key] = value.strip()
-    return meta
+    return {k: v.strip() for k, v in zip(keys, location.split(",")[1:], strict=False)}
 
 
-def write_epw(
-    path: Union[str, Path],
-    header_lines: list[str],
-    df: pd.DataFrame,
-) -> None:
-    """Write a morphed DataFrame back to an EPW file.
+def detect_baseline_year(header_lines: list[str], df: Optional[pd.DataFrame] = None) -> int:
+    """Guess the climate baseline year of an EPW file.
 
-    Parameters
-    ----------
-    path:
-        Destination path for the output ``.epw`` file.
-    header_lines:
-        List of raw header strings (length == NUM_HEADER_LINES).
-    df:
-        Data DataFrame with columns matching :`EPW_COLUMNS`.
+    Uses the midpoint of ``Period of Record=YYYY-YYYY`` (TMYx/OneBuilding
+    comments). Falls back to the median data year, then raises ``ValueError``.
     """
-    path = Path(path)
-    logger.debug("Writing EPW file: %s", path)
-
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        for line in header_lines:
-            fh.write(line + "\n")
-
-        writer = csv.writer(fh, lineterminator="\n")
-        for _, row in df.iterrows():
-            writer.writerow([row[col] for col in EPW_COLUMNS])
-
-    logger.debug("Wrote %d data rows to %s", len(df), path)
+    for line in header_lines:
+        m = _PERIOD_RE.search(line)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+            return round((start + end) / 2)
+    if df is not None and "year" in df and df["year"].notna().any():
+        return int(df["year"].median())
+    raise ValueError("Cannot detect baseline year; pass it explicitly.")

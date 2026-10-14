@@ -1,20 +1,15 @@
-"""Climate-change morphing of EPW weather data.
+"""Belcher et al. (2005) morphing of EPW data.
 
-Implements the Belcher, Hacker & Powell (2005) morphing methodology:
-  - Additive shift      : x_future = x_baseline + delta_x
-  - Multiplicative      : x_future = alpha * x_baseline
-  - Combined (temp)     : x_future = x_baseline + delta_x
-                          + alpha * (x_baseline - x_monthly_mean)
+- shift:          x' = x + dx
+- stretch:        x' = a * x
+- shift+stretch:  x' = x + dx + a * (x - mean_month(x))
 
-Monthly deltas/alphas are expanded to 8760 hourly values via the
-``month`` column that the EPW parser always produces.
-
-Column name constants here MUST match the names in parser.EPW_COLUMNS.
+Coefficients may be scalars, 12 monthly values, or one value per row.
+Empty cells and EnergyPlus missing codes (e.g. 99.9, 999, 9999) are left as is.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Dict, Optional, Union
 
 import numpy as np
@@ -22,364 +17,160 @@ import pandas as pd
 
 from epwupgrader.psychrometrics import (
     recalculate_dew_point_after_temp_shift,
-    recalculate_rh_after_temp_shift,
+    scale_rh_for_temp_shift,
 )
 
-logger = logging.getLogger(__name__)
+Coeff = Union[np.ndarray, list, float, int]
 
-# ---------------------------------------------------------------------------
-# Column name constants — must match parser.EPW_COLUMNS exactly
-# ---------------------------------------------------------------------------
-COL_DRY_BULB: str = "dry_bulb_temperature"
-COL_DEW_POINT: str = "dew_point_temperature"
-COL_RH: str = "relative_humidity"
-COL_PRESSURE: str = "atmospheric_pressure"
-COL_GHI: str = "global_horizontal_radiation"
-COL_DNI: str = "direct_normal_radiation"
-COL_DHI: str = "diffuse_horizontal_radiation"
-COL_WIND_SPEED: str = "wind_speed"
-COL_MONTH: str = "month"
+COL_DRY_BULB = "dry_bulb_temperature"
+COL_DEW_POINT = "dew_point_temperature"
+COL_RH = "relative_humidity"
+COL_PRESSURE = "atmospheric_pressure"
+COL_GHI = "global_horizontal_radiation"
+COL_DNI = "direct_normal_radiation"
+COL_DHI = "diffuse_horizontal_radiation"
+COL_WIND_SPEED = "wind_speed"
+COL_MONTH = "month"
+
+
+# EnergyPlus "missing" codes: values at or above these are not data.
+MISSING_AT_OR_ABOVE = {
+    COL_DRY_BULB: 99.9,
+    COL_DEW_POINT: 99.9,
+    COL_RH: 999.0,
+    COL_PRESSURE: 999999.0,
+    COL_GHI: 9999.0,
+    COL_DNI: 9999.0,
+    COL_DHI: 9999.0,
+    COL_WIND_SPEED: 999.0,
+}
+
+
+def _valid(df: pd.DataFrame, col: str) -> np.ndarray:
+    """Boolean mask of rows holding real data (not NaN, not a missing code)."""
+    values = df[col].to_numpy(dtype=float)
+    return ~np.isnan(values) & (values < MISSING_AT_OR_ABOVE.get(col, np.inf))
 
 
 def _check_column(df: pd.DataFrame, col: str, caller: str) -> None:
-    """Raise KeyError with a descriptive message when *col* is absent."""
     if col not in df.columns:
-        raise KeyError(
-            f"{caller}: required column {col!r} not found. "
-            f"Available: {list(df.columns)}"
-        )
+        raise KeyError(f"{caller}: required column {col!r} not found.")
 
 
-def _resolve_delta(
-    delta: Union[np.ndarray, list, float, int],
-    df: pd.DataFrame,
-) -> np.ndarray:
-    """Resolve a delta/alpha argument into a 1-D float array of len(df).
-
-    Accepts:
-    * scalar              -> broadcast to ``len(df)``
-    * length-12 array     -> expanded monthly->hourly via ``month`` column
-    * length-N array      -> used as-is (must equal ``len(df)``)
-    """
-    arr = np.asarray(delta, dtype=float)
+def _resolve(coeff: Coeff, df: pd.DataFrame) -> np.ndarray:
+    """Expand a scalar / monthly / hourly coefficient to one value per row."""
+    arr = np.asarray(coeff, dtype=float)
     if arr.ndim == 0:
-        return np.full(len(df), float(delta))
+        return np.full(len(df), float(arr))
     if arr.shape[0] == 12 and len(df) != 12:
-        month_indices = df[COL_MONTH].to_numpy(dtype=int) - 1
-        return arr[month_indices]
+        _check_column(df, COL_MONTH, "_resolve")
+        return arr[df[COL_MONTH].to_numpy(dtype=int) - 1]
     if arr.shape[0] != len(df):
         raise ValueError(
-            f"delta/alpha length {arr.shape[0]} does not match DataFrame "
-            f"length {len(df)} and is not 12 (monthly)."
+            f"coefficient length {arr.shape[0]} matches neither 12 months nor {len(df)} rows."
         )
     return arr
 
 
-def _monthly_means(df: pd.DataFrame, col: str) -> np.ndarray:
-    """Return per-row monthly mean of *col*.
-
-    Returns an array (length == len(df)) where each element is the mean
-    of *col* for that row's calendar month. Uses the ``month`` column.
-    """
-    _check_column(df, COL_MONTH, "_monthly_means")
-    means = df.groupby(COL_MONTH)[col].transform("mean")
-    return means.to_numpy(dtype=float)
-
-
-def apply_temperature_morphing(
-    temperature: float,
-    delta_t: float,
-    alpha: float,
-    t_mean: float,
-) -> float:
-    """Apply scalar temperature morphing (combined shift + stretch).
-
-    Formula: T_future = T + delta_t + 0.5 * alpha * (T - t_mean)
-
-    Parameters
-    ----------
-    temperature : float
-        Baseline temperature in degrees Celsius.
-    delta_t : float
-        Absolute temperature shift in degrees Celsius.
-    alpha : float
-        Fractional change coefficient for the stretch term.
-    t_mean : float
-        Monthly mean baseline temperature in degrees Celsius.
-
-    Returns
-    -------
-    float
-        Morphed temperature in degrees Celsius.
-    """
-    return temperature + delta_t + 0.5 * alpha * (temperature - t_mean)
-
-
-def apply_wind_morphing(wind_speed: float, scale_factor: float) -> float:
-    """Apply multiplicative morphing to a scalar wind speed value.
-
-    Result is clamped to >= 0.
-
-    Parameters
-    ----------
-    wind_speed : float
-        Baseline wind speed in m/s.
-    scale_factor : float
-        Multiplicative scaling factor.
-
-    Returns
-    -------
-    float
-        Morphed wind speed in m/s, >= 0.
-    """
-    return max(0.0, wind_speed * scale_factor)
-
-
-def apply_precipitation_morphing(
-    precipitation: float,
-    scale_factor: float,
-) -> float:
-    """Apply multiplicative morphing to a scalar precipitation value.
-
-    Result is clamped to >= 0.
-
-    Parameters
-    ----------
-    precipitation : float
-        Baseline precipitation value.
-    scale_factor : float
-        Multiplicative scaling factor.
-
-    Returns
-    -------
-    float
-        Morphed precipitation value, >= 0.
-    """
-    return max(0.0, precipitation * scale_factor)
+def _scale(df: pd.DataFrame, col: str, alpha: Coeff) -> None:
+    values = df[col].to_numpy(dtype=float)
+    scaled = np.clip(values * _resolve(alpha, df), 0.0, None)
+    df[col] = np.where(_valid(df, col), scaled, values)
 
 
 def morph_temperature(
     df: pd.DataFrame,
-    delta_t: Union[np.ndarray, list, float],
-    alpha_t: Optional[Union[np.ndarray, list, float]] = None,
+    delta_t: Coeff,
+    alpha_t: Optional[Coeff] = None,
 ) -> pd.DataFrame:
-    """Morph dry-bulb temperature and recalculate psychrometric fields.
+    """Shift (and optionally stretch) dry-bulb temperature.
 
-    After shifting T_db, dew-point and RH are recalculated holding actual
-    vapour pressure constant (Belcher et al. 2005 assumption).
-
-    Formula when alpha_t is supplied (Belcher eq. 3):
-        T_future = T + delta_T + alpha_T * (T - T_monthly_mean)
-
-    Formula when alpha_t is None (Belcher eq. 1, pure additive shift):
-        T_future = T + delta_T
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Baseline EPW data.
-    delta_t : scalar or array-like
-        Absolute temperature change in degC. Can be a scalar, a
-        length-12 monthly array, or a length-8760 hourly array.
-    alpha_t : scalar or array-like, optional
-        Fractional change coefficient for combined morphing (eq. 3).
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy with ``dry_bulb_temperature``, ``dew_point_temperature``,
-        and ``relative_humidity`` updated.
+    RH and dew point are updated at constant vapour pressure.
     """
+    for col in (COL_DRY_BULB, COL_DEW_POINT, COL_RH):
+        _check_column(df, col, "morph_temperature")
     result = df.copy()
-    _check_column(result, COL_DRY_BULB, "morph_temperature")
-    _check_column(result, COL_DEW_POINT, "morph_temperature")
-    _check_column(result, COL_RH, "morph_temperature")
 
-    # Save original dew point BEFORE any shift — this encodes conserved
-    # actual vapour pressure used in the psychrometric recalculation below.
-    original_dew_point = result[COL_DEW_POINT].to_numpy(dtype=float)
-    t_values = result[COL_DRY_BULB].to_numpy(dtype=float)
-    d_t = _resolve_delta(delta_t, result)
-
+    ok_t = _valid(result, COL_DRY_BULB)
+    t = result[COL_DRY_BULB].to_numpy(dtype=float)
+    new_t = t + _resolve(delta_t, result)
     if alpha_t is not None:
-        a_t = _resolve_delta(alpha_t, result)
-        monthly_means = _monthly_means(result, COL_DRY_BULB)
-        new_t = t_values + d_t + a_t * (t_values - monthly_means)
-    else:
-        new_t = t_values + d_t
+        real_t = result[COL_DRY_BULB].where(ok_t)
+        monthly_mean = real_t.groupby(result[COL_MONTH]).transform("mean").to_numpy()
+        new_t = new_t + _resolve(alpha_t, result) * (t - monthly_mean)
+    new_t = np.where(ok_t, new_t, t)
 
+    rh = result[COL_RH].to_numpy(dtype=float)
+    dew_point = result[COL_DEW_POINT].to_numpy(dtype=float)
     result[COL_DRY_BULB] = new_t
-
-    # Psychrometric recalculation — mandatory after every temperature shift.
-    # Actual vapour pressure is conserved; RH and dew-point must fall as
-    # saturation VP rises exponentially with temperature (Clausius-Clapeyron).
-    result[COL_RH] = recalculate_rh_after_temp_shift(original_dew_point, new_t)
-    result[COL_DEW_POINT] = recalculate_dew_point_after_temp_shift(
-        original_dew_point, new_t
+    result[COL_RH] = np.where(
+        ok_t & _valid(result, COL_RH), scale_rh_for_temp_shift(rh, t, new_t), rh
+    )
+    result[COL_DEW_POINT] = np.where(
+        ok_t & _valid(result, COL_DEW_POINT),
+        recalculate_dew_point_after_temp_shift(dew_point, new_t),
+        dew_point,
     )
     return result
 
 
 def morph_radiation(
     df: pd.DataFrame,
-    alpha_ghi: Union[np.ndarray, list, float],
-    alpha_dni: Optional[Union[np.ndarray, list, float]] = None,
-    alpha_dhi: Optional[Union[np.ndarray, list, float]] = None,
+    alpha_ghi: Coeff,
+    alpha_dni: Optional[Coeff] = None,
+    alpha_dhi: Optional[Coeff] = None,
 ) -> pd.DataFrame:
-    """Morph solar radiation fields using multiplicative morphing.
-
-    R_future = alpha_R * R_baseline   (clipped to >= 0)
-
-    Negative values are physically impossible and would cause EnergyPlus
-    to abort, so results are hard-clipped to zero.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Baseline EPW data.
-    alpha_ghi : scalar or array-like
-        Multiplier for global horizontal irradiance.
-    alpha_dni : scalar or array-like, optional
-        Multiplier for direct normal irradiance.
-    alpha_dhi : scalar or array-like, optional
-        Multiplier for diffuse horizontal irradiance.
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy with radiation columns morphed and floor-clamped to 0.
-    """
+    """Scale GHI (and optionally DNI/DHI); results are clipped to >= 0."""
     result = df.copy()
-
-    def _apply_rad(col: str, alpha: Union[np.ndarray, list, float]) -> None:
-        if col not in result.columns:
-            logger.warning("morph_radiation: column %r not found; skipping.", col)
-            return
-        values = result[col].to_numpy(dtype=float)
-        a = _resolve_delta(alpha, result)
-        result[col] = np.clip(values * a, 0.0, None)
-
-    _apply_rad(COL_GHI, alpha_ghi)
-    if alpha_dni is not None:
-        _apply_rad(COL_DNI, alpha_dni)
-    if alpha_dhi is not None:
-        _apply_rad(COL_DHI, alpha_dhi)
-
+    for col, alpha in ((COL_GHI, alpha_ghi), (COL_DNI, alpha_dni), (COL_DHI, alpha_dhi)):
+        if alpha is not None:
+            _check_column(result, col, "morph_radiation")
+            _scale(result, col, alpha)
     return result
 
 
-def morph_wind_speed(
-    df: pd.DataFrame,
-    alpha_ws: Union[np.ndarray, list, float],
-) -> pd.DataFrame:
-    """Morph wind speed using multiplicative morphing, clipped to >= 0.
-
-    WS_future = alpha_WS * WS_baseline
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Baseline EPW data containing ``wind_speed``.
-    alpha_ws : scalar or array-like
-        Fractional multiplier for wind speed.
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy with ``wind_speed`` morphed.
-    """
+def morph_wind_speed(df: pd.DataFrame, alpha_ws: Coeff) -> pd.DataFrame:
+    """Scale wind speed; results are clipped to >= 0."""
+    _check_column(df, COL_WIND_SPEED, "morph_wind_speed")
     result = df.copy()
-    _check_column(result, COL_WIND_SPEED, "morph_wind_speed")
-    values = result[COL_WIND_SPEED].to_numpy(dtype=float)
-    a = _resolve_delta(alpha_ws, result)
-    result[COL_WIND_SPEED] = np.clip(values * a, 0.0, None)
+    _scale(result, COL_WIND_SPEED, alpha_ws)
     return result
 
 
-def morph_pressure(
-    df: pd.DataFrame,
-    delta_p: Union[np.ndarray, list, float],
-) -> pd.DataFrame:
-    """Morph atmospheric pressure using an additive shift.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Baseline EPW data containing ``atmospheric_pressure``.
-    delta_p : scalar or array-like
-        Absolute pressure change in Pa.
-
-    Returns
-    -------
-    pd.DataFrame
-        Copy with ``atmospheric_pressure`` morphed.
-    """
+def morph_pressure(df: pd.DataFrame, delta_p: Coeff) -> pd.DataFrame:
+    """Shift atmospheric pressure by *delta_p* Pa."""
+    _check_column(df, COL_PRESSURE, "morph_pressure")
     result = df.copy()
-    _check_column(result, COL_PRESSURE, "morph_pressure")
     values = result[COL_PRESSURE].to_numpy(dtype=float)
-    d_p = _resolve_delta(delta_p, result)
-    result[COL_PRESSURE] = values + d_p
+    shifted = values + _resolve(delta_p, result)
+    result[COL_PRESSURE] = np.where(_valid(result, COL_PRESSURE), shifted, values)
     return result
 
 
 def apply_all_morphing(
     df: pd.DataFrame,
-    deltas: Dict[str, Union[np.ndarray, list, float]],
-    alphas: Optional[Dict[str, Union[np.ndarray, list, float]]] = None,
+    deltas: Dict[str, Coeff],
+    alphas: Optional[Dict[str, Coeff]] = None,
 ) -> pd.DataFrame:
-    """Apply a complete set of morphing operations in one call.
+    """Apply several morphs at once.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Baseline EPW data.
-    deltas : dict
-        Mapping of ``{field_name: delta_value}`` for additive morphing.
-        Recognised keys: ``"dry_bulb_temperature"``,
-        ``"dew_point_temperature"``, ``"atmospheric_pressure"``.
-    alphas : dict, optional
-        Mapping of ``{field_name: alpha_value}`` for multiplicative
-        morphing. Recognised keys: ``"dry_bulb_temperature"`` (combined),
-        ``"global_horizontal_radiation"``,
-        ``"direct_normal_radiation"``,
-        ``"diffuse_horizontal_radiation"``, ``"wind_speed"``.
-
-    Returns
-    -------
-    pd.DataFrame
-        Morphed copy of *df* with identical index.
+    ``deltas`` keys: dry_bulb_temperature, atmospheric_pressure.
+    ``alphas`` keys: dry_bulb_temperature (stretch), global/direct_normal/
+    diffuse_horizontal_radiation, wind_speed.
     """
-    if alphas is None:
-        alphas = {}
-
+    alphas = alphas or {}
     result = df.copy()
-
     if COL_DRY_BULB in deltas:
-        result = morph_temperature(
-            result,
-            delta_t=deltas[COL_DRY_BULB],
-            alpha_t=alphas.get(COL_DRY_BULB),
-        )
-
-    if COL_DEW_POINT in deltas:
-        result = morph_temperature(
-            result,
-            delta_t=deltas[COL_DEW_POINT],
-            alpha_t=None,
-        )
-
+        result = morph_temperature(result, deltas[COL_DRY_BULB], alphas.get(COL_DRY_BULB))
     if COL_PRESSURE in deltas:
-        result = morph_pressure(result, delta_p=deltas[COL_PRESSURE])
-
-    if COL_GHI in alphas:
+        result = morph_pressure(result, deltas[COL_PRESSURE])
+    if any(c in alphas for c in (COL_GHI, COL_DNI, COL_DHI)):
         result = morph_radiation(
             result,
-            alpha_ghi=alphas[COL_GHI],
+            alpha_ghi=alphas.get(COL_GHI),
             alpha_dni=alphas.get(COL_DNI),
             alpha_dhi=alphas.get(COL_DHI),
         )
-
     if COL_WIND_SPEED in alphas:
-        result = morph_wind_speed(result, alpha_ws=alphas[COL_WIND_SPEED])
-
+        result = morph_wind_speed(result, alphas[COL_WIND_SPEED])
     return result
